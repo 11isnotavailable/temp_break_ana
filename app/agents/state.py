@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     expert_requests: Annotated[List[str], operator.add]
     conversation_history: Annotated[List[Dict[str, Any]], operator.add]
     pulse_history: List[Dict[str, Any]]
+    data_records: List[Dict[str, Any]]
     current_data: Dict[str, Any]
     latest_report: str
     diagnostic_conclusion: str
@@ -27,3 +28,9 @@ class AgentState(TypedDict):
     expert_turn_count: int
     current_cycle_recorded: bool
     message_counter: int
+    pending_request: Dict[str, Any]
+    expert_requested_ranges: List[Dict[str, Any]]
+    delivered_record_ids: List[int]
+    final_record_ids: List[int]
+    latest_data_window: List[Dict[str, Any]]
+    all_data_exhausted: bool

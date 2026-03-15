@@ -29,6 +29,13 @@ def normalize_string_list(value: Any) -> List[str]:
     return []
 
 
+def coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def make_message(
     state: Dict[str, Any],
     speaker: str,
@@ -70,6 +77,53 @@ def describe_recent_pulses(pulse_history: List[Dict[str, Any]], limit: int = 5) 
             f"状态={item.get('status')}, 扩展指标={item.get('extra_metrics', {})}"
         )
     return "\n".join(lines)
+
+
+def format_record(record: Dict[str, Any]) -> str:
+    return (
+        f"序号#{record.get('sequence')} | 时间={record.get('recorded_at')} | "
+        f"实际温度={record.get('t_actual')} | 预测温度={record.get('t_predicted')} | "
+        f"TDI={record.get('tdi_value', 0):.2%} | 状态={record.get('status')} | "
+        f"监控分析={record.get('scout_analysis', '')}"
+    )
+
+
+def format_records_block(records: List[Dict[str, Any]]) -> str:
+    if not records:
+        return "暂无记录。"
+    return "\n".join(format_record(record) for record in records)
+
+
+def merge_record_ids(existing: List[int], incoming: List[int]) -> List[int]:
+    return sorted({coerce_int(item) for item in existing + incoming if coerce_int(item) > 0})
+
+
+def pick_records_by_ids(records: List[Dict[str, Any]], record_ids: List[int]) -> List[Dict[str, Any]]:
+    wanted = {coerce_int(record_id) for record_id in record_ids if coerce_int(record_id) > 0}
+    return [record for record in records if coerce_int(record.get("sequence")) in wanted]
+
+
+def collect_records_by_range(
+    records: List[Dict[str, Any]],
+    start_seq: int,
+    end_seq: int,
+) -> Tuple[List[Dict[str, Any]], int, int, bool]:
+    if not records:
+        return [], 0, 0, True
+
+    available_start = coerce_int(records[0].get("sequence"), 1)
+    available_end = coerce_int(records[-1].get("sequence"), available_start)
+    normalized_start = max(min(coerce_int(start_seq, available_start), available_end), available_start)
+    normalized_end = max(min(coerce_int(end_seq, available_end), available_end), normalized_start)
+    subset = [
+        record
+        for record in records
+        if normalized_start <= coerce_int(record.get("sequence")) <= normalized_end
+    ]
+    exhausted = normalized_start != coerce_int(start_seq, normalized_start) or normalized_end != coerce_int(
+        end_seq, normalized_end
+    )
+    return subset, normalized_start, normalized_end, exhausted
 
 
 def resolve_pending_requests(state: Dict[str, Any], pending_requests: List[str]) -> str:

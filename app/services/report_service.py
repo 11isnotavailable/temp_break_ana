@@ -22,7 +22,7 @@ report_llm = ChatOpenAI(
 REPORT_SYSTEM_PROMPT = """
 你是工业设备故障诊断报告生成助手。
 
-请基于输入的设备信息、监控摘要、历史脉冲、双 Agent 对话记录、诊断结论和处置建议，
+请基于输入的设备信息、监控摘要、历史脉冲或监控数据库记录、双 Agent 对话记录、诊断结论和处置建议，
 生成一份适合在前端弹窗中展示的完整 HTML 报告。
 
 要求：
@@ -62,6 +62,26 @@ def _render_chat_messages(messages: List[Dict[str, Any]]) -> str:
 
 
 def _render_history_rows(history_data: Dict[str, Any]) -> str:
+    data_records = history_data.get("data_records", [])
+    if data_records:
+        rows = []
+        for item in data_records:
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(item.get('sequence', '')))}</td>"
+                f"<td>{html.escape(str(item.get('recorded_at', '')))}</td>"
+                f"<td>{html.escape(str(item.get('t_predicted', '')))}</td>"
+                f"<td>{html.escape(str(item.get('t_actual', '')))}</td>"
+                f"<td>{html.escape(str(item.get('status', '')))}</td>"
+                f"<td>{html.escape(str(item.get('scout_analysis', '')))}</td>"
+                "</tr>"
+            )
+
+        return (
+            "<table><thead><tr><th>序号</th><th>时间</th><th>预测温度</th><th>实际温度</th><th>状态</th><th>监控分析</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+
     pulse_history = history_data.get("pulse_history", [])
     if not pulse_history:
         return "<p>暂无历史脉冲数据。</p>"

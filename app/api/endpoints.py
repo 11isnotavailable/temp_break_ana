@@ -4,6 +4,7 @@ from time import perf_counter
 from fastapi import APIRouter, HTTPException
 
 from ..agents.graph import app_graph
+from ..services.mock_data_service import build_seed_records
 from ..services.report_service import build_fallback_report, generate_report_html
 from .schemas import (
     DiagnosisReport,
@@ -36,6 +37,7 @@ def make_session_state(task_id: str, device_id: str, category: str, metadata: di
         "expert_requests": [],
         "conversation_history": [],
         "pulse_history": [],
+        "data_records": build_seed_records(),
         "current_data": {},
         "latest_report": "等待首轮监控数据输入",
         "diagnostic_conclusion": "",
@@ -53,14 +55,23 @@ def make_session_state(task_id: str, device_id: str, category: str, metadata: di
         "expert_turn_count": 0,
         "current_cycle_recorded": False,
         "message_counter": 0,
+        "pending_request": {},
+        "expert_requested_ranges": [],
+        "delivered_record_ids": [],
+        "final_record_ids": [],
+        "latest_data_window": [],
+        "all_data_exhausted": False,
     }
 
 
 def build_pulse_feedback(state: dict) -> PulseFeedback:
     latest_tdi = state["tdi_history"][-1] if state.get("tdi_history") else 0.0
+    latest_record = state.get("data_records", [])[-1] if state.get("data_records") else {}
     return PulseFeedback(
         is_anomaly=state.get("is_anomaly", False),
         tdi_value=latest_tdi,
+        latest_sequence=int(latest_record.get("sequence", 0) or 0),
+        latest_recorded_at=str(latest_record.get("recorded_at", "") or ""),
         latest_report=state.get("latest_report", ""),
         expert_status=state.get("expert_status", "sleeping"),
         conversation_closed=state.get("conversation_closed", False),
@@ -78,6 +89,7 @@ def build_report_response(task_id: str) -> ReportResponse:
     state = sessions[task_id]
     decision = "TERMINATE" if state.get("should_terminate") else "CONTINUE"
     latest_tdi = state["tdi_history"][-1] if state.get("tdi_history") else 0.0
+    latest_record = state.get("data_records", [])[-1] if state.get("data_records") else {}
 
     return ReportResponse(
         task_id=task_id,
@@ -89,6 +101,8 @@ def build_report_response(task_id: str) -> ReportResponse:
             conversation_closed=state.get("conversation_closed", False),
             monitoring_locked=state.get("monitoring_locked", False),
             report_ready=state.get("report_ready", False),
+            latest_sequence=int(latest_record.get("sequence", 0) or 0),
+            latest_recorded_at=str(latest_record.get("recorded_at", "") or ""),
             latest_tdi=latest_tdi,
             latest_report=state.get("latest_report", ""),
             expert_turn_count=state.get("expert_turn_count", 0),
@@ -96,13 +110,14 @@ def build_report_response(task_id: str) -> ReportResponse:
         diagnosis=DiagnosisReport(
             conclusion=state.get("diagnostic_conclusion", ""),
             actions=state.get("actions", []),
-            requests=state.get("pending_requests", []),
+            requests=state.get("expert_requests", []),
         ),
         conversation_history=state.get("conversation_history", []),
         history=ReportHistory(
             tdi_history=state.get("tdi_history", []),
             scout_reports=state.get("scout_reports", []),
             pulse_history=state.get("pulse_history", []),
+            data_records=state.get("data_records", []),
         ),
         report_html=state.get("generated_report_html", ""),
     )
@@ -224,6 +239,7 @@ async def generate_report(req: GenerateReportRequest):
         "tdi_history": state.get("tdi_history", []),
         "scout_reports": state.get("scout_reports", []),
         "pulse_history": state.get("pulse_history", []),
+        "data_records": state.get("data_records", []),
         **req.history_data,
     }
     chat_messages = [message.model_dump() for message in req.chat_messages] or state.get(

@@ -34,6 +34,8 @@ class ChatMessage(BaseModel):
 class PulseFeedback(BaseModel):
     is_anomaly: bool
     tdi_value: float
+    latest_sequence: int
+    latest_recorded_at: str
     latest_report: str
     expert_status: Literal["sleeping", "running", "done"]
     conversation_closed: bool
@@ -58,6 +60,8 @@ class ReportSummary(BaseModel):
     conversation_closed: bool
     monitoring_locked: bool
     report_ready: bool
+    latest_sequence: int
+    latest_recorded_at: str
     latest_tdi: float
     latest_report: str
     expert_turn_count: int
@@ -73,6 +77,7 @@ class ReportHistory(BaseModel):
     tdi_history: List[float]
     scout_reports: List[str]
     pulse_history: List[Dict[str, Any]]
+    data_records: List[Dict[str, Any]]
 
 
 class ReportResponse(BaseModel):

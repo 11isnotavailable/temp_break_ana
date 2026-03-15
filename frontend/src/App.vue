@@ -13,6 +13,8 @@ const service = createAnalysisService({
 const initialFrame = () => ({
   task_id: service.taskId,
   timestamp: "",
+  latest_sequence: 10,
+  latest_recorded_at: "",
   report: "等待首轮监控数据输入",
   is_anomaly: false,
   expert_status: "sleeping",
@@ -25,6 +27,7 @@ const initialFrame = () => ({
   expert_turn_count: 0,
   conversation_history: [],
   history: {},
+  dashboard: null,
   decision: "CONTINUE",
   report_html: ""
 });
@@ -39,24 +42,42 @@ const reportError = ref("");
 const reportHtml = ref("");
 const reportModalOpen = ref(false);
 const reportGeneratedFor = ref("");
+const nextWriteCountdown = ref(10);
+const lastSequenceChangedAt = ref(Date.now());
+const pullInFlight = ref(false);
 let timer = null;
+let countdownTimer = null;
 
 const anomaly = computed(() => currentFrame.value.is_anomaly);
 const expectedChatCount = computed(() => currentFrame.value.conversation_history?.length || 0);
+const writeActive = computed(
+  () => !currentFrame.value.monitoring_locked && currentFrame.value.expert_status !== "done"
+);
 
 async function pullFrame() {
+  if (pullInFlight.value) {
+    return;
+  }
+
   try {
+    pullInFlight.value = true;
     errorMessage.value = "";
     const frame = await service.fetchReport(currentFrame.value.task_id);
+    const previousKey = `${currentFrame.value.latest_sequence}-${currentFrame.value.latest_recorded_at}-${currentFrame.value.report}`;
+    const nextKey = `${frame.latest_sequence}-${frame.latest_recorded_at}-${frame.report}`;
+    if (nextKey !== previousKey) {
+      cards.value = [...cards.value, frame].slice(-6);
+    }
     currentFrame.value = frame;
     if (frame.report_html) {
       reportHtml.value = frame.report_html;
     }
-    cards.value = [...cards.value, frame].slice(-3);
     loading.value = false;
   } catch (error) {
     loading.value = false;
     errorMessage.value = error instanceof Error ? error.message : "数据加载失败";
+  } finally {
+    pullInFlight.value = false;
   }
 }
 
@@ -84,7 +105,8 @@ async function generateReport() {
       historyData: {
         pulse_history: currentFrame.value.history?.pulse_history || [],
         tdi_history: currentFrame.value.history?.tdi_history || [],
-        scout_reports: cards.value.map((item) => item.report)
+        scout_reports: cards.value.map((item) => item.report),
+        data_records: currentFrame.value.history?.data_records || []
       },
       chatMessages: chatMessages.value
     });
@@ -165,14 +187,39 @@ watch(
   }
 );
 
+watch(
+  () => currentFrame.value.latest_sequence,
+  (next, prev) => {
+    if (next && next !== prev) {
+      lastSequenceChangedAt.value = Date.now();
+      nextWriteCountdown.value = 10;
+    }
+  }
+);
+
 onMounted(async () => {
   await pullFrame();
-  timer = window.setInterval(pullFrame, 3500);
+  timer = window.setInterval(pullFrame, 2000);
+  countdownTimer = window.setInterval(() => {
+    if (pullInFlight.value) {
+      nextWriteCountdown.value = 0;
+      return;
+    }
+    if (!writeActive.value || currentFrame.value.is_anomaly) {
+      nextWriteCountdown.value = 0;
+      return;
+    }
+    const elapsedSeconds = Math.floor((Date.now() - lastSequenceChangedAt.value) / 1000);
+    nextWriteCountdown.value = Math.max(0, 10 - elapsedSeconds);
+  }, 1000);
 });
 
 onUnmounted(() => {
   if (timer) {
     window.clearInterval(timer);
+  }
+  if (countdownTimer) {
+    window.clearInterval(countdownTimer);
   }
 });
 </script>
@@ -180,7 +227,7 @@ onUnmounted(() => {
 <template>
   <main class="screen-shell">
     <section class="screen-grid">
-      <LeftPlaceholder />
+      <LeftPlaceholder :dashboard="currentFrame.dashboard" />
 
       <section class="diagnosis-shell">
         <section class="workspace-frame">
@@ -196,7 +243,14 @@ onUnmounted(() => {
           <div v-else-if="loading" class="banner">正在建立诊断会话...</div>
 
           <div class="workspace-grid">
-            <ScoutPanel :cards="cards" :anomaly="anomaly" />
+            <ScoutPanel
+              :cards="cards"
+              :anomaly="anomaly"
+              :next-write-countdown="nextWriteCountdown"
+              :write-active="writeActive && !anomaly"
+              :pull-in-flight="pullInFlight"
+              :latest-sequence="currentFrame.latest_sequence"
+            />
             <ExpertPanel
               :anomaly="anomaly"
               :expert-status="currentFrame.expert_status"
@@ -211,7 +265,13 @@ onUnmounted(() => {
             />
           </div>
 
-          <StatusBar :anomaly="anomaly" />
+          <StatusBar
+            :anomaly="anomaly"
+            :sequence="currentFrame.latest_sequence"
+            :recorded-at="currentFrame.latest_recorded_at"
+            :expert-status="currentFrame.expert_status"
+            :monitoring-locked="currentFrame.monitoring_locked"
+          />
         </section>
       </section>
     </section>

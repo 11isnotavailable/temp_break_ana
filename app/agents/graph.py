@@ -19,7 +19,7 @@ def create_industrial_graph():
     def route_after_expert(state: AgentState):
         if state.get("diagnosis_ready"):
             return "end"
-        if state.get("pending_requests") and state.get("expert_turn_count", 0) < settings.MAX_EXPERT_TURNS:
+        if state.get("pending_request") and state.get("expert_turn_count", 0) < settings.MAX_EXPERT_TURNS:
             return "scout"
         return "end"
 
