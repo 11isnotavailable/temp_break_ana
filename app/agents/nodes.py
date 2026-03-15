@@ -1,112 +1,256 @@
-import json
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
-from ..core.config import settings
-from .state import AgentState
-from .prompts import SCOUT_SYSTEM_PROMPT, EXPERT_SYSTEM_PROMPT
+import logging
+from time import perf_counter
 
-# 初始化 LLM
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
+from ..core.config import settings
+from ..services.calc_utils import (
+    calculate_tdi,
+    describe_recent_pulses,
+    extract_json_block,
+    make_message,
+    normalize_string_list,
+    resolve_pending_requests,
+    summarize_recent_history,
+)
+from .prompts import EXPERT_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT
+from .state import AgentState
+
+logger = logging.getLogger("fault_diagnosis.agents")
+
 llm = ChatOpenAI(
     model=settings.MODEL_NAME,
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.OPENAI_API_BASE,
     temperature=0.2,
-    # DeepSeek 有时响应较慢，可以适当增加超时时间
-    timeout=60 
+    timeout=60,
 )
 
+
 def scout_agent(state: AgentState):
-    """
-    Agent 1: 数据侦察员
-    职责：计算指标、监控稳定性、整理报告、决定是否调用专家。
-    """
-    print(f"\n[Agent 1] 正在处理任务: {state['task_id']}")
-    
-    # 1. 提取当前脉冲数据
+    started_at = perf_counter()
     curr = state["current_data"]
     t_act = curr.get("t_actual")
     t_pre = curr.get("t_predicted")
-    
-    # 2. 计算 TDI (热偏移指数)
-    # 避免除以零，加入 epsilon 1e-6
-    current_tdi = abs(t_act - t_pre) / (t_pre + 1e-6)
-    
-    # 3. 稳定性与终止逻辑
-    # 获取历史记录并加入当前值进行判定
-    all_tdis = state.get("tdi_history", []) + [current_tdi]
-    is_stable = False
-    if len(all_tdis) >= settings.STABLE_CYCLES:
-        # 判定最后 N 个周期是否都低于预设阈值
-        recent = all_tdis[-settings.STABLE_CYCLES:]
-        if all(v < settings.TDI_THRESHOLD for v in recent):
-            is_stable = True
+    current_tdi = calculate_tdi(t_act, t_pre)
 
-    # 4. 构建给 LLM 的上下文 (包含专家的历史要求)
-    expert_context = ""
-    if state["expert_requests"]:
-        # 提取最近的一个专家要求
-        expert_context = f"\n[重要] 专家此前要求核查: {state['expert_requests'][-1]}"
+    recorded_this_cycle = bool(state.get("current_cycle_recorded"))
+    existing_tdis = state.get("tdi_history", [])
+    all_tdis = existing_tdis if recorded_this_cycle else existing_tdis + [current_tdi]
+    recent = all_tdis[-settings.STABLE_CYCLES :]
+    is_stable = len(recent) == settings.STABLE_CYCLES and all(value < settings.TDI_THRESHOLD for value in recent)
+    is_anomaly = current_tdi > settings.TDI_THRESHOLD
+    pending_requests = state.get("pending_requests", [])
+    should_continue_dialogue = is_anomaly or bool(pending_requests)
 
-    human_input = (
-        f"设备类型: {state['device_info'].get('category')}\n"
-        f"当前数据: 真实温度={t_act}, 预测温度={t_pre}, TDI={current_tdi:.2%}\n"
-        f"设备状态: {curr.get('status')}\n"
-        f"{expert_context}"
+    logger.info(
+        "scout start | task_id=%s anomaly=%s pending_requests=%s current_cycle_recorded=%s",
+        state.get("task_id"),
+        is_anomaly,
+        len(pending_requests),
+        recorded_this_cycle,
     )
 
-    # 5. 调用 LLM 生成分析报告
-    response = llm.invoke([
-        SystemMessage(content=SCOUT_SYSTEM_PROMPT),
-        HumanMessage(content=human_input)
-    ])
-    
-    # 6. 决定流程去向
-    # 如果 TDI 超过阈值，去专家节点 (expert)；否则结束本次脉冲 (end)
-    # 如果系统已经稳定，则标记 should_terminate 为 True
-    next_node = "expert" if current_tdi > settings.TDI_THRESHOLD else "end"
-    
-    return {
-        "tdi_history": [current_tdi], # Annotated 会自动 append
-        "latest_report": response.content,
-        "is_stable": is_stable,
-        "should_terminate": is_stable,
-        "next_node": next_node
+    request_context = resolve_pending_requests(state, pending_requests)
+    human_input = (
+        f"设备类别: {state['device_info'].get('category')}\n"
+        f"当前温度: 实际={t_act}, 预测={t_pre}, TDI={current_tdi:.2%}\n"
+        f"设备状态: {curr.get('status')}\n"
+        f"扩展指标: {curr.get('extra_metrics', {})}\n"
+        f"最近脉冲摘要:\n{describe_recent_pulses(state.get('pulse_history', []))}\n"
+        f"待回应请求: {pending_requests or '无'}\n"
+        f"请求对应数据:\n{request_context or '无'}"
+    )
+
+    logger.info("scout model invoke started | task_id=%s", state.get("task_id"))
+    response = llm.invoke(
+        [
+            SystemMessage(content=SCOUT_SYSTEM_PROMPT),
+            HumanMessage(content=human_input),
+        ]
+    )
+    latest_report = str(response.content).strip()
+    logger.info(
+        "scout model invoke completed | task_id=%s elapsed=%.2fs report_len=%s",
+        state.get("task_id"),
+        perf_counter() - started_at,
+        len(latest_report),
+    )
+
+    updates = {
+        "scout_reports": [latest_report],
+        "latest_report": latest_report,
+        "is_anomaly": is_anomaly,
+        "should_terminate": is_stable and not should_continue_dialogue,
+        "expert_status": "running" if should_continue_dialogue else "sleeping",
+        "next_node": "expert" if should_continue_dialogue else "end",
+        "conversation_closed": False,
+        "report_ready": False,
+        "current_cycle_recorded": True,
     }
+
+    if not recorded_this_cycle:
+        updates["tdi_history"] = [current_tdi]
+
+    if should_continue_dialogue:
+        title = "实时监控 Agent 数据回应" if pending_requests else "实时监控 Agent 异常摘要"
+        message, counter = make_message(state, "scout", title, latest_report, "agent")
+        updates["conversation_history"] = [message]
+        updates["message_counter"] = counter
+
+    logger.info(
+        "scout end | task_id=%s next_node=%s should_terminate=%s expert_status=%s",
+        state.get("task_id"),
+        updates["next_node"],
+        updates["should_terminate"],
+        updates["expert_status"],
+    )
+    return updates
+
 
 def expert_agent(state: AgentState):
-    """
-    Agent 2: 故障诊断专家
-    职责：基于 Scout 的报告进行故障根因分析，并可能向 Scout 提出更多数据需求。
-    """
-    print(f"[Agent 2] 正在针对任务 {state['task_id']} 进行深度诊断...")
+    started_at = perf_counter()
+    turn_number = int(state.get("expert_turn_count", 0)) + 1
+    force_finalize = turn_number >= settings.MAX_EXPERT_TURNS
+    current_tdi = state.get("tdi_history", [])[-1] if state.get("tdi_history") else 0.0
+    recent_history = summarize_recent_history(state.get("conversation_history", []))
 
-    # 1. 构建专家分析的上下文
-    scout_report = state["latest_report"]
-    device_type = state["device_info"].get("category")
-    
     human_input = (
-        f"监控专家报告: {scout_report}\n"
-        f"设备类别: {device_type}\n"
-        f"请基于上述信息进行诊断。"
+        f"当前专家轮次: 第 {turn_number} 轮\n"
+        f"最大追问轮次: {settings.MAX_EXPERT_TURNS}\n"
+        f"设备类别: {state['device_info'].get('category')}\n"
+        f"当前 TDI: {current_tdi:.2%}\n"
+        f"监控摘要: {state.get('latest_report', '')}\n"
+        f"最近对话历史:\n{recent_history}\n"
+        f"最近脉冲数据:\n{describe_recent_pulses(state.get('pulse_history', []))}\n"
+        f"当前待回应请求: {state.get('pending_requests', [])}\n"
+        f"{'当前已到最后允许轮次，必须直接给出诊断结论和处置建议。' if force_finalize else ''}"
     )
 
-    # 2. 调用 LLM 进行诊断
-    response = llm.invoke([
-        SystemMessage(content=EXPERT_SYSTEM_PROMPT),
-        HumanMessage(content=human_input)
-    ])
-    
-    content = response.content
-    
-    # 3. 解析专家是否提出了新的数据要求
-    # 简单逻辑：如果文本包含“请提供”或“需要查看”，则作为 request 记录
-    new_requests = []
-    if "请提供" in content or "需要" in content or "?" in content:
-        # 这里可以进一步用 LLM 提取具体的字段，目前先记录全文
-        new_requests = ["专家发起了新的数据补充请求"]
+    logger.info(
+        "expert start | task_id=%s turn=%s force_finalize=%s pending_requests=%s",
+        state.get("task_id"),
+        turn_number,
+        force_finalize,
+        len(state.get("pending_requests", [])),
+    )
+    logger.info("expert model invoke started | task_id=%s turn=%s", state.get("task_id"), turn_number)
+    response = llm.invoke(
+        [
+            SystemMessage(content=EXPERT_SYSTEM_PROMPT),
+            HumanMessage(content=human_input),
+        ]
+    )
 
-    return {
-        "diagnostic_conclusion": content,
-        "expert_requests": new_requests, # Annotated 会自动 append
-        "next_node": "end" # 诊断完后，本轮结束，等待 30s 后的下一个数据脉冲
+    content = str(response.content).strip()
+    parsed = extract_json_block(content)
+    thinking = str(parsed.get("thinking") or content).strip()
+    need_more_data = bool(parsed.get("need_more_data")) and not force_finalize
+    requests = normalize_string_list(parsed.get("requests"))
+    diagnosis = str(parsed.get("diagnosis") or "").strip()
+    actions = normalize_string_list(parsed.get("actions"))
+    logger.info(
+        "expert model invoke completed | task_id=%s turn=%s elapsed=%.2fs need_more_data=%s requests=%s diagnosis_present=%s actions=%s",
+        state.get("task_id"),
+        turn_number,
+        perf_counter() - started_at,
+        need_more_data,
+        len(requests),
+        bool(diagnosis),
+        len(actions),
+    )
+
+    updates = {
+        "expert_turn_count": turn_number,
+        "expert_status": "running",
+        "diagnosis_ready": False,
+        "conversation_closed": False,
+        "report_ready": False,
+        "next_node": "end",
     }
+
+    first_message, counter = make_message(
+        state,
+        "expert",
+        f"深度专家评估 第 {turn_number} 轮",
+        thinking,
+        "agent",
+    )
+    conversation_updates = [first_message]
+    working_state = {**state, "message_counter": counter}
+
+    if need_more_data and requests:
+        request_message, counter = make_message(
+            working_state,
+            "expert",
+            f"深度专家请求 第 {turn_number} 轮",
+            "；".join(requests),
+            "system",
+        )
+        conversation_updates.append(request_message)
+        updates.update(
+            {
+                "pending_requests": requests,
+                "expert_requests": requests,
+                "conversation_history": conversation_updates,
+                "message_counter": counter,
+                "next_node": "scout",
+                "actions": state.get("actions", []),
+                "conversation_closed": False,
+            }
+        )
+        logger.info(
+            "expert loop back to scout | task_id=%s turn=%s requests=%s",
+            state.get("task_id"),
+            turn_number,
+            requests,
+        )
+        return updates
+
+    if not diagnosis:
+        diagnosis = thinking
+    if not actions:
+        actions = ["建议立即复核润滑、冷却及运行负载等关键部件状态。"]
+
+    diagnosis_message, counter = make_message(
+        working_state,
+        "expert",
+        "诊断结论",
+        diagnosis,
+        "result",
+    )
+    conversation_updates.append(diagnosis_message)
+    working_state = {**working_state, "message_counter": counter}
+
+    actions_message, counter = make_message(
+        working_state,
+        "expert",
+        "处置建议",
+        "；".join(actions),
+        "result",
+    )
+    conversation_updates.append(actions_message)
+
+    updates.update(
+        {
+            "diagnostic_conclusion": diagnosis,
+            "actions": actions,
+            "pending_requests": [],
+            "conversation_history": conversation_updates,
+            "message_counter": counter,
+            "expert_status": "done",
+            "diagnosis_ready": True,
+            "conversation_closed": True,
+            "report_ready": False,
+            "next_node": "end",
+        }
+    )
+    logger.info(
+        "expert finalized | task_id=%s turn=%s diagnosis_len=%s actions=%s",
+        state.get("task_id"),
+        turn_number,
+        len(diagnosis),
+        len(actions),
+    )
+    return updates

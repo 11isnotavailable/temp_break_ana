@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 运维终端 - 3D 滚筒分析原型</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #030712; color: #f8fafc; font-family: 'Inter', sans-serif; perspective: 1200px; }
+        .glass-card { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(51, 65, 85, 0.4); }
+        
+        /* Agent 1: 滚筒式 X 轴滚动 (类似合页/笔记本转轴) [应用户要求] */
+        .scout-roller-wrap { height: 120px; position: relative; transform-style: preserve-3d; transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        .scout-msg { 
+            position: absolute; width: 100%; height: 60px; left: 0; top: 50%; margin-top: -30px;
+            background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(59, 130, 246, 0.3);
+            display: flex; align-items: center; justify-content: center; padding: 0 15px; font-size: 13px;
+            backface-visibility: hidden; border-radius: 8px; color: #94a3b8;
+        }
+
+        /* 微信式聊天动效 */
+        .bubble { animation: slideUp 0.3s ease-out forwards; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* 加载动画 */
+        .thinking-dots { display: inline-flex; gap: 4px; }
+        .dot { width: 5px; height: 5px; background: #3b82f6; border-radius: 50%; animation: blink 1.4s infinite both; }
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+    </style>
+</head>
+<body class="h-screen flex p-4 gap-4 overflow-hidden">
+
+    <aside class="w-2/5 flex flex-col gap-4">
+        <div class="glass-card rounded-2xl p-6 h-1/3">
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Device Status</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div><p class="text-[10px] text-gray-500 uppercase">ID</p><p class="font-mono text-blue-400">MOCK-0004</p></div>
+                <div><p class="text-[10px] text-gray-500 uppercase">Type</p><p>离心泵</p></div>
+                <div class="col-span-2 pt-4 border-t border-gray-800">
+                    <p class="text-[10px] text-gray-500 mb-1">REAL-TIME TEMPERATURE</p>
+                    <div class="flex items-baseline gap-2">
+                        <span id="tempVal" class="text-4xl font-bold text-white font-mono">75.0</span>
+                        <span class="text-gray-500">°C</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="glass-card rounded-2xl p-6 flex-1 flex flex-col">
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Trend Analytics</h3>
+            <div class="flex-1 border-l border-b border-gray-800 relative">
+                <div class="absolute inset-0 flex items-center justify-center opacity-10 italic text-xs">趋势曲线渲染中...</div>
+                <div class="absolute bottom-10 left-10 w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6]"></div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col gap-4">
+        
+        <div class="glass-card rounded-2xl p-6 h-48 flex flex-col justify-center overflow-hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xs font-bold text-blue-400 flex items-center">
+                    <span class="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
+                    AGENT 1: DATA SCOUT
+                </h3>
+                <span class="text-[10px] text-gray-500 font-mono">PULSE: 2000ms</span>
+            </div>
+            <div class="relative flex-1 flex items-center perspective-[800px]">
+                <div id="scoutRoller" class="scout-roller-wrap w-full">
+                    </div>
+            </div>
+        </div>
+
+        <div class="glass-card rounded-2xl flex-1 flex flex-col overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-800 bg-white/5">
+                <h3 class="text-xs font-bold text-purple-400 flex items-center">
+                    <span class="w-1.5 h-1.5 bg-purple-500 rounded-full mr-2"></span>
+                    AGENT 2: DIAGNOSTIC EXPERT
+                </h3>
+            </div>
+            
+            <div id="chatBox" class="flex-1 overflow-y-auto p-6 space-y-4">
+                <div class="bubble bg-gray-800/40 border border-gray-700/50 p-3 rounded-xl text-sm text-gray-500 italic">
+                    待 Agent 1 报告异常后启动深度诊断逻辑...
+                </div>
+            </div>
+
+            <div id="expertThinking" class="px-6 py-3 flex items-center gap-3 hidden">
+                <div class="thinking-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+                <span id="thinkingText" class="text-[11px] text-blue-400 italic font-medium">正在读取时序特征...</span>
+            </div>
+
+            <div id="actionArea" class="p-4 bg-blue-500/5 border-t border-gray-800 hidden">
+                <div class="flex justify-between items-center">
+                    <p class="text-[11px] text-green-400 font-bold">建议立即检查润滑油系统</p>
+                    <button class="bg-blue-600 px-4 py-1.5 rounded-lg text-[11px] font-bold">生成工单</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const scoutRoller = document.getElementById('scoutRoller');
+        const chatBox = document.getElementById('chatBox');
+        const expertThinking = document.getElementById('expertThinking');
+        const thinkingText = document.getElementById('thinkingText');
+        const actionArea = document.getElementById('actionArea');
+        const tempValEl = document.getElementById('tempVal');
+
+        const rollerMsgs = [
+            "当前设备运行平稳，TDI 偏差在 0.1 正常范围内。",
+            "正在分析高频温度脉冲，未见周期性震荡异常。",
+            "云端模型对比完成：当前特征与历史健康基准吻合度 98%。",
+            "感知端数据校验成功，曼彻斯特编解码无丢包。"
+        ];
+
+        const anomalyMsgs = [
+            "⚠️ 警告：监测到温度上升斜率异常（> 2.5℃/min）！",
+            "⚠️ 关键告警：TDI 指标突增至 0.65，预测失真！",
+            "🆘 申请 Agent 2 介入，当前特征符合典型润滑故障规律。"
+        ];
+
+        let rollerAngle = 0;
+        let pulseCount = 0;
+        let isAnomalyTriggered = false;
+
+        // 初始化滚筒面
+        for(let i=0; i<4; i++) {
+            const div = document.createElement('div');
+            div.className = 'scout-msg';
+            div.style.transform = `rotateX(${i * 90}deg) translateZ(30px)`;
+            div.innerText = rollerMsgs[i];
+            scoutRoller.appendChild(div);
+        }
+
+        // 2秒动一下 [应用户要求]
+        setInterval(() => {
+            if (isAnomalyTriggered) return; // 异常诊断期间暂停滚筒
+
+            pulseCount++;
+            rollerAngle -= 90;
+            scoutRoller.style.transform = `rotateX(${rollerAngle}deg)`;
+            
+            const isAnomaly = (pulseCount % 5 === 0);
+            updateContent(isAnomaly);
+
+            if (isAnomaly) {
+                isAnomalyTriggered = true;
+                runExpertDiagnosis();
+            }
+        }, 2000);
+
+        function updateContent(isAnomaly) {
+            const temp = isAnomaly ? (81 + Math.random()*4).toFixed(1) : (74 + Math.random()*2).toFixed(1);
+            tempValEl.innerText = temp;
+            tempValEl.className = `text-4xl font-bold font-mono transition-colors ${isAnomaly ? 'text-red-500' : 'text-white'}`;
+
+            // 更新下一个面（即将滚到的面）的内容
+            const nextIdx = (Math.abs(rollerAngle / 90) + 1) % 4;
+            const msgs = document.querySelectorAll('.scout-msg');
+            if (isAnomaly) {
+                msgs[nextIdx].innerText = anomalyMsgs[Math.floor(Math.random()*3)];
+                msgs[nextIdx].style.color = "#f87171";
+                msgs[nextIdx].style.borderColor = "#ef4444";
+            } else {
+                msgs[nextIdx].innerText = rollerMsgs[Math.floor(Math.random()*4)];
+                msgs[nextIdx].style.color = "#94a3b8";
+                msgs[nextIdx].style.borderColor = "rgba(59, 130, 246, 0.3)";
+            }
+        }
+
+        // Agent 2 微信式诊断：带停顿和加载 [应用户要求]
+        async function runExpertDiagnosis() {
+            actionArea.classList.add('hidden');
+            chatBox.innerHTML = ''; // 清空过往
+
+            // 1. 发现异常
+            addMessage("Agent 1 报告：检测到非周期性温升偏差，请求根因追溯。", "system");
+            
+            // 2. 停顿思考 - 读取信息
+            await think("正在调取边缘侧 30s TDI 数据流并进行特征向量转换...", 2500);
+            addMessage("专家：已接收数据。温度增长曲线符合‘阻力增大’特征，排除传感器误报。", "expert");
+
+            // 3. 停顿思考 - RAG 检索
+            await think("正在基于 RAG 检索《离心泵故障维保库》并进行语义对齐...", 3000);
+            addMessage("专家：检索完成。历史案例显示，此类 TDI 突变通常关联润滑油粘度退化（相似度 89%）。", "expert");
+
+            // 4. 给出最终结论
+            await think("正在综合工况与知识图谱生成最终修复行动建议...", 2000);
+            addMessage("专家：诊断结论为**润滑系统故障**。建议立即执行计划外维保，检查冷却液循环及油泵状态。", "expert");
+
+            actionArea.classList.remove('hidden');
+            isAnomalyTriggered = false; // 诊断结束，恢复监控
+        }
+
+        function addMessage(text, type) {
+            const div = document.createElement('div');
+            div.className = `bubble p-3 rounded-2xl text-sm max-w-[90%] shadow-sm ${type === 'system' ? 'bg-blue-900/20 border border-blue-500/20 text-blue-200' : 'bg-purple-900/20 border border-purple-500/30 text-purple-100 self-end'}`;
+            div.innerText = text;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function think(text, ms) {
+            thinkingText.innerText = text;
+            expertThinking.classList.remove('hidden');
+            chatBox.scrollTop = chatBox.scrollHeight;
+            await new Promise(r => setTimeout(r, ms));
+            expertThinking.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
