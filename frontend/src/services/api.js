@@ -1,6 +1,10 @@
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1/analysis";
-const PULSE_INTERVAL_MS = 10000;
-const SEED_RECORD_COUNT = 10;
+const PREVIEW_INTERVAL_MS = 2500;
+const WINDOW_SIZE = 5;
+const ACTUAL_VISIBLE_COUNT = 3;
+const ALARM_TEMPERATURE = 89;
+const EXPERT_TRIGGER_SEQUENCE = 7;
+
 const MOCK_DEVICE = {
   name: "离心泵机组 A-17",
   model: "CPX-80",
@@ -9,49 +13,43 @@ const MOCK_DEVICE = {
   maintainer: "巡检班组 B"
 };
 
-const seedRows = [
-  { t_predicted: 80.0, t_actual: 79.8, extra_metrics: { current: 18.1, vibration: 0.5, pressure: 1.22 } },
-  { t_predicted: 80.0, t_actual: 80.1, extra_metrics: { current: 18.2, vibration: 0.52, pressure: 1.21 } },
-  { t_predicted: 80.0, t_actual: 79.9, extra_metrics: { current: 18.3, vibration: 0.54, pressure: 1.2 } },
-  { t_predicted: 80.0, t_actual: 80.4, extra_metrics: { current: 18.4, vibration: 0.56, pressure: 1.18 } },
-  { t_predicted: 80.0, t_actual: 80.6, extra_metrics: { current: 18.5, vibration: 0.58, pressure: 1.16 } },
-  { t_predicted: 80.0, t_actual: 80.2, extra_metrics: { current: 18.6, vibration: 0.6, pressure: 1.15 } },
-  { t_predicted: 80.0, t_actual: 79.7, extra_metrics: { current: 18.7, vibration: 0.61, pressure: 1.14 } },
-  { t_predicted: 80.0, t_actual: 80.5, extra_metrics: { current: 18.9, vibration: 0.63, pressure: 1.13 } },
-  { t_predicted: 80.0, t_actual: 80.8, extra_metrics: { current: 19.0, vibration: 0.65, pressure: 1.11 } },
-  { t_predicted: 80.0, t_actual: 81.0, extra_metrics: { current: 19.2, vibration: 0.66, pressure: 1.1 } }
-];
+const CURVE_POINTS = [60, 63, 65, 62, 66, 65, 72, 79, 90, 94].map((y, index) => ({
+  x: index,
+  y
+}));
 
-const scenarioPulses = [
+const MAX_WINDOW_INDEX = CURVE_POINTS.length - WINDOW_SIZE;
+
+const analysisPulses = [
   {
     t_predicted: 80.0,
-    t_actual: 81.4,
+    t_actual: 90.6,
     status: "RUNNING",
-    extra_metrics: { current: 18.8, vibration: 0.64, pressure: 1.18 }
+    extra_metrics: { current: 21.8, vibration: 1.02, pressure: 0.97 }
   },
   {
     t_predicted: 80.0,
-    t_actual: 82.6,
+    t_actual: 92.8,
     status: "RUNNING",
-    extra_metrics: { current: 19.1, vibration: 0.71, pressure: 1.15 }
+    extra_metrics: { current: 22.7, vibration: 1.14, pressure: 0.93 }
   },
   {
     t_predicted: 80.0,
-    t_actual: 84.2,
+    t_actual: 95.4,
     status: "RUNNING",
-    extra_metrics: { current: 19.9, vibration: 0.78, pressure: 1.11 }
+    extra_metrics: { current: 23.9, vibration: 1.3, pressure: 0.88 }
   },
   {
     t_predicted: 80.0,
-    t_actual: 88.4,
+    t_actual: 98.7,
     status: "RUNNING",
-    extra_metrics: { current: 20.8, vibration: 0.96, pressure: 1.03 }
+    extra_metrics: { current: 25.1, vibration: 1.46, pressure: 0.82 }
   },
   {
     t_predicted: 80.0,
-    t_actual: 95.6,
+    t_actual: 102.9,
     status: "RUNNING",
-    extra_metrics: { current: 23.6, vibration: 1.46, pressure: 0.89 }
+    extra_metrics: { current: 26.4, vibration: 1.64, pressure: 0.75 }
   }
 ];
 
@@ -72,26 +70,21 @@ function formatRecordedAtFromSequence(sequence) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
-function buildSeedRecords() {
-  return seedRows.map((row, index) => ({
-    sequence: index + 1,
-    recorded_at: formatRecordedAtFromSequence(index + 1),
+function buildVisualWindow(windowIndex) {
+  return CURVE_POINTS.slice(windowIndex, windowIndex + WINDOW_SIZE).map((point, index) => ({
+    sequence: windowIndex + index + 1,
+    recorded_at: formatRecordedAtFromSequence(windowIndex + index + 1),
     status: "RUNNING",
-    scout_analysis: "监控判断设备温度与预测值接近，维持常规巡检。",
-    ...row
+    t_predicted: 80.0,
+    t_actual: point.y,
+    chart_value: point.y,
+    actual_visible: index < ACTUAL_VISIBLE_COUNT,
+    extra_metrics: {
+      current: Number((17.6 + point.x * 0.34).toFixed(1)),
+      vibration: Number((0.42 + point.x * 0.055).toFixed(2)),
+      pressure: Number((1.24 - point.x * 0.03).toFixed(2))
+    }
   }));
-}
-
-function buildRuntimeRecord(sequence, pulse, analysis) {
-  return {
-    sequence,
-    recorded_at: formatRecordedAtFromSequence(sequence),
-    status: pulse.status,
-    t_predicted: pulse.t_predicted,
-    t_actual: pulse.t_actual,
-    extra_metrics: pulse.extra_metrics || {},
-    scout_analysis: analysis
-  };
 }
 
 async function requestJson(url, options = {}) {
@@ -162,23 +155,30 @@ function mapFrame(payload) {
 }
 
 function enrichSimulatedFrame(frame, sentPulses) {
-  const fallbackSequence = SEED_RECORD_COUNT + sentPulses.length;
   return {
     ...frame,
-    latest_sequence: Number.isFinite(frame.latest_sequence) && frame.latest_sequence > 0 ? frame.latest_sequence : fallbackSequence,
+    latest_sequence:
+      Number.isFinite(frame.latest_sequence) && frame.latest_sequence > 0
+        ? frame.latest_sequence
+        : sentPulses.length,
     latest_recorded_at: frame.latest_recorded_at || frame.timestamp
   };
 }
 
-function attachMockDashboard(frame, records) {
-  const latestRecord = records[records.length - 1] || null;
-  const actual = latestRecord?.t_actual || 0;
-  const predicted = latestRecord?.t_predicted || 0;
-  const delta = actual - predicted;
-  const vibration = latestRecord?.extra_metrics?.vibration || 0;
-  const current = latestRecord?.extra_metrics?.current || 0;
-  const pressure = latestRecord?.extra_metrics?.pressure || 0;
-  const healthScore = Math.max(12, Math.min(99, Math.round(100 - Math.abs(delta) * 3.6 - vibration * 12)));
+function attachMockDashboard(frame, visualRecords, statusLabel) {
+  const actualRecords = visualRecords.filter((record) => record.actual_visible);
+  const latestActualRecord = actualRecords[actualRecords.length - 1] || null;
+  const latestPredictedRecord = visualRecords[visualRecords.length - 1] || latestActualRecord;
+  const actual = latestActualRecord?.chart_value ?? 0;
+  const predicted = latestPredictedRecord?.chart_value ?? actual;
+  const delta = predicted - actual;
+  const current = latestActualRecord?.extra_metrics?.current || 0;
+  const vibration = latestActualRecord?.extra_metrics?.vibration || 0;
+  const pressure = latestActualRecord?.extra_metrics?.pressure || 0;
+  const healthScore = Math.max(
+    12,
+    Math.min(99, Math.round(100 - Math.abs(delta) * 4.5 - vibration * 8))
+  );
 
   return {
     ...frame,
@@ -186,17 +186,18 @@ function attachMockDashboard(frame, records) {
       device: {
         ...MOCK_DEVICE,
         taskId: frame.task_id,
-        statusLabel: frame.monitoring_locked
-          ? "待人工处理"
-          : frame.is_anomaly
-            ? "异常审查中"
-            : "在线监测",
+        statusLabel,
         source: "mock-local",
-        updatedAt: latestRecord?.recorded_at || frame.latest_recorded_at || frame.timestamp
+        updatedAt: latestActualRecord?.recorded_at || frame.latest_recorded_at || frame.timestamp
       },
-      latestRecord,
+      latestRecord: latestActualRecord,
       healthScore,
-      records: records.slice(-12),
+      alarmTemperature: ALARM_TEMPERATURE,
+      chartRange: {
+        min: 60,
+        max: 100
+      },
+      records: visualRecords,
       metrics: {
         actual,
         predicted,
@@ -209,17 +210,53 @@ function attachMockDashboard(frame, records) {
   };
 }
 
+function buildLocalMonitorFrame(taskId, windowIndex) {
+  const visualRecords = buildVisualWindow(windowIndex);
+  const latestActualRecord = visualRecords.filter((record) => record.actual_visible).at(-1);
+  const triggerReady = (latestActualRecord?.sequence ?? 0) >= EXPERT_TRIGGER_SEQUENCE;
+
+  return attachMockDashboard(
+    {
+      task_id: taskId,
+      timestamp: formatTimestamp(),
+      latest_sequence: latestActualRecord?.sequence || windowIndex + ACTUAL_VISIBLE_COUNT,
+      latest_recorded_at: latestActualRecord?.recorded_at || formatTimestamp(),
+      report: triggerReady
+        ? `已到达第 ${EXPERT_TRIGGER_SEQUENCE} 个时间步，正在切入深度专家诊断。`
+        : "监控 Agent 正按滑动窗口推进。",
+      is_anomaly: false,
+      expert_status: "sleeping",
+      conversation_closed: false,
+      monitoring_locked: false,
+      report_ready: false,
+      diagnosis: "",
+      actions: [],
+      requests: [],
+      expert_turn_count: 0,
+      conversation_history: [],
+      history: {
+        pulse_history: [],
+        data_records: []
+      },
+      decision: "CONTINUE",
+      report_html: ""
+    },
+    visualRecords,
+    triggerReady ? "预警分析中" : "监控正常"
+  );
+}
+
 export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAULT_BASE_URL } = {}) {
   let taskId = createTaskId();
-  let started = false;
-  let pulseIndex = 0;
+  let sessionStarted = false;
+  let analysisPulseIndex = 0;
   let finalized = false;
-  let lastPulseAt = 0;
+  let lastWindowAdvanceAt = 0;
+  let lastAnalysisPulseAt = 0;
+  let windowIndex = 0;
   const sentPulses = [];
-  let timelineRecords = buildSeedRecords();
 
   async function startSession(currentTaskId) {
-    timelineRecords = buildSeedRecords();
     await requestJson(`${baseUrl}/start`, {
       method: "POST",
       body: JSON.stringify({
@@ -232,34 +269,23 @@ export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAUL
         }
       })
     });
-    started = true;
+    sessionStarted = true;
   }
 
   async function ensureSession() {
-    if (started || mode === "api") {
+    if (sessionStarted || mode === "api") {
       return;
     }
     await startSession(taskId);
   }
 
   async function restartLocalState() {
-    pulseIndex = 0;
+    analysisPulseIndex = 0;
     finalized = false;
-    lastPulseAt = 0;
+    lastWindowAdvanceAt = 0;
+    lastAnalysisPulseAt = 0;
+    windowIndex = 0;
     sentPulses.length = 0;
-    timelineRecords = buildSeedRecords();
-  }
-
-  async function restartSession() {
-    await restartLocalState();
-    if (mode === "api") {
-      return;
-    }
-    await requestJson(`${baseUrl}/restart`, {
-      method: "POST",
-      body: JSON.stringify({ task_id: taskId })
-    });
-    started = true;
   }
 
   return {
@@ -272,16 +298,53 @@ export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAUL
         return mapFrame(data);
       }
 
-      await ensureSession();
-
       const now = Date.now();
+      const currentWindow = buildVisualWindow(windowIndex);
+      const currentLatestActual = currentWindow.filter((record) => record.actual_visible).at(-1);
+      const currentTriggerReady =
+        (currentLatestActual?.sequence ?? 0) >= EXPERT_TRIGGER_SEQUENCE;
+
+      if (!sessionStarted && !currentTriggerReady) {
+        if (lastWindowAdvanceAt === 0) {
+          lastWindowAdvanceAt = now;
+          return buildLocalMonitorFrame(taskId, windowIndex);
+        }
+
+        if (now - lastWindowAdvanceAt >= PREVIEW_INTERVAL_MS) {
+          windowIndex = Math.min(windowIndex + 1, MAX_WINDOW_INDEX);
+          lastWindowAdvanceAt = now;
+        }
+
+        const advancedWindow = buildVisualWindow(windowIndex);
+        const advancedLatestActual = advancedWindow.filter((record) => record.actual_visible).at(-1);
+        const advancedTriggerReady =
+          (advancedLatestActual?.sequence ?? 0) >= EXPERT_TRIGGER_SEQUENCE;
+
+        if (!advancedTriggerReady) {
+          return buildLocalMonitorFrame(taskId, windowIndex);
+        }
+      }
+
+      if (!sessionStarted) {
+        await ensureSession();
+      }
+
+      if (windowIndex < MAX_WINDOW_INDEX) {
+        if (lastWindowAdvanceAt === 0) {
+          lastWindowAdvanceAt = now;
+        } else if (now - lastWindowAdvanceAt >= PREVIEW_INTERVAL_MS) {
+          windowIndex = Math.min(windowIndex + 1, MAX_WINDOW_INDEX);
+          lastWindowAdvanceAt = now;
+        }
+      }
+
       const shouldPushPulse =
         !finalized &&
-        pulseIndex < scenarioPulses.length &&
-        (pulseIndex === 0 || now - lastPulseAt >= PULSE_INTERVAL_MS);
+        analysisPulseIndex < analysisPulses.length &&
+        (analysisPulseIndex === 0 || now - lastAnalysisPulseAt >= PREVIEW_INTERVAL_MS);
 
       if (shouldPushPulse) {
-        const pulse = scenarioPulses[pulseIndex];
+        const pulse = analysisPulses[analysisPulseIndex];
         let data;
 
         try {
@@ -295,8 +358,8 @@ export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAUL
         } catch (error) {
           if (error instanceof Error && error.message.includes("Task not found")) {
             taskId = createTaskId();
-            started = false;
-            await startSession(taskId);
+            sessionStarted = false;
+            await ensureSession();
             data = await requestJson(`${baseUrl}/pulse`, {
               method: "POST",
               body: JSON.stringify({
@@ -310,30 +373,34 @@ export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAUL
         }
 
         sentPulses.push(pulse);
-        pulseIndex += 1;
-        lastPulseAt = now;
+        analysisPulseIndex += 1;
+        lastAnalysisPulseAt = now;
         const mappedFrame = enrichSimulatedFrame(mapFrame(data), sentPulses);
-        timelineRecords = [
-          ...timelineRecords,
-          buildRuntimeRecord(SEED_RECORD_COUNT + sentPulses.length, pulse, mappedFrame.report)
-        ];
 
-        if (data.feedback.conversation_closed || data.feedback.monitoring_locked || data.feedback.expert_status === "done") {
+        if (
+          data.feedback.conversation_closed ||
+          data.feedback.monitoring_locked ||
+          data.feedback.expert_status === "done"
+        ) {
           finalized = true;
         }
 
         return {
-          ...attachMockDashboard(mappedFrame, timelineRecords),
+          ...attachMockDashboard(mappedFrame, buildVisualWindow(windowIndex), "预警分析中"),
           history: {
             pulse_history: [...sentPulses],
-            data_records: [...timelineRecords]
+            data_records: []
           }
         };
       }
 
+      if (!sentPulses.length) {
+        return buildLocalMonitorFrame(taskId, windowIndex);
+      }
+
       const data = await requestJson(`${baseUrl}/report/${taskId}`, { method: "GET" });
       const mappedFrame = enrichSimulatedFrame(mapFrame(data), sentPulses);
-      return attachMockDashboard(mappedFrame, timelineRecords);
+      return attachMockDashboard(mappedFrame, buildVisualWindow(windowIndex), "预警分析中");
     },
     async generateReport({ taskId: reportTaskId, issueSummary, historyData, chatMessages }) {
       return requestJson(`${baseUrl}/report/generate`, {
@@ -355,7 +422,7 @@ export function createAnalysisService({ mode = "api-simulated", baseUrl = DEFAUL
         })
       });
       taskId = currentTaskId;
-      started = true;
+      sessionStarted = false;
       await restartLocalState();
       return { task_id: taskId };
     }

@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: dark;
   --status-bar-height: 62px;
   --bg: #07111f;
@@ -74,7 +74,7 @@ ul {
 }
 
 .placeholder-card {
-  padding: 24px;
+  padding: clamp(14px, 1.4vw, 24px);
   position: relative;
 }
 
@@ -89,7 +89,7 @@ ul {
 }
 
 .placeholder-tall {
-  min-height: 360px;
+  min-height: 0;
 }
 
 .placeholder-header,
@@ -135,26 +135,27 @@ ul {
 
 .device-title-block {
   position: relative;
-  margin-top: 26px;
+  margin-top: clamp(14px, 2vh, 26px);
 }
 
 .device-title-block h3 {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 28px;
+  font-size: clamp(20px, 1.8vw, 28px);
 }
 
 .device-title-block p {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--muted);
+  font-size: clamp(12px, 0.9vw, 15px);
 }
 
 .device-grid {
   position: relative;
   display: grid;
   grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
-  gap: 18px;
-  margin-top: 24px;
+  gap: clamp(10px, 1vw, 18px);
+  margin-top: clamp(12px, 1.8vh, 24px);
 }
 
 .device-spotlight,
@@ -166,21 +167,22 @@ ul {
 }
 
 .device-spotlight {
-  padding: 18px;
+  padding: clamp(12px, 1vw, 18px);
 }
 
 .device-spotlight strong {
   display: block;
   margin-top: 8px;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 54px;
+  font-size: clamp(34px, 3vw, 54px);
   line-height: 1;
 }
 
 .device-spotlight p {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   color: var(--muted);
-  line-height: 1.6;
+  line-height: 1.45;
+  font-size: clamp(12px, 0.85vw, 14px);
 }
 
 .device-info-list {
@@ -189,8 +191,7 @@ ul {
 }
 
 .device-info-list div {
-  padding: 16px 18px;
-  border-right: 1px solid rgba(105, 145, 207, 0.12);
+  padding: clamp(12px, 0.95vw, 16px) clamp(12px, 1vw, 18px);  border-right: 1px solid rgba(105, 145, 207, 0.12);
   border-bottom: 1px solid rgba(105, 145, 207, 0.12);
 }
 
@@ -211,26 +212,25 @@ ul {
   position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+  gap: clamp(8px, 0.8vw, 12px);
+  margin-top: clamp(12px, 1.4vh, 18px);
 }
 
 .metric-tile {
-  padding: 14px 16px;
+  padding: clamp(10px, 0.9vw, 14px) clamp(12px, 1vw, 16px);
 }
 
 .metric-tile strong {
   display: block;
-  margin-top: 8px;
+  margin-top: 6px;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 24px;
+  font-size: clamp(18px, 1.4vw, 24px);
 }
 
 .metric-label {
   display: block;
   color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: clamp(10px, 0.7vw, 11px);  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -241,10 +241,10 @@ ul {
 
 .trend-chart-shell {
   position: relative;
-  height: calc(100% - 108px);
-  min-height: 220px;
-  margin-top: 24px;
-  padding: 14px;
+  height: clamp(150px, 28vh, 280px);
+  min-height: 0;
+  margin-top: clamp(12px, 1.8vh, 24px);
+  padding: clamp(10px, 0.9vw, 14px);
   overflow: hidden;
 }
 
@@ -268,19 +268,34 @@ ul {
 
 .trend-line {
   fill: none;
-  stroke-width: 3;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
 .trend-line-actual {
   stroke: #ffb26f;
+  stroke-width: 2.1;
   filter: drop-shadow(0 0 8px rgba(255, 178, 111, 0.28));
 }
 
 .trend-line-predicted {
-  stroke: #53d6ff;
-  stroke-dasharray: 8 6;
+  stroke: rgba(175, 218, 255, 0.58);
+  stroke-width: 4.5;
+  stroke-dasharray: 12 8;
+  filter: drop-shadow(0 0 10px rgba(173, 220, 255, 0.12));
+}
+
+.trend-threshold {
+  stroke: rgba(196, 203, 215, 0.5);
+  stroke-width: 1.4;
+  stroke-dasharray: 7 6;
+}
+
+.trend-threshold-label {
+  fill: rgba(196, 203, 215, 0.86);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-anchor: end;
 }
 
 .trend-legend,
@@ -289,9 +304,9 @@ ul {
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: clamp(8px, 1vw, 14px);
   color: var(--muted);
-  font-size: 13px;
+  font-size: clamp(11px, 0.85vw, 13px);
 }
 
 .trend-legend {
@@ -315,7 +330,11 @@ ul {
 }
 
 .legend-predicted {
-  background: #53d6ff;
+  background: rgba(175, 218, 255, 0.58);
+}
+
+.legend-threshold {
+  background: rgba(196, 203, 215, 0.68);
 }
 
 .diagnosis-shell {
@@ -505,7 +524,7 @@ ul {
 
 .log-index strong {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 28px;
+  font-size: clamp(20px, 1.8vw, 28px);
   line-height: 1;
 }
 
@@ -851,6 +870,84 @@ ul {
   }
 }
 
+@media (max-height: 900px) {
+  .screen-shell {
+    padding: 12px;
+  }
+
+  .screen-grid {
+    height: calc(100vh - 24px);
+    gap: 12px;
+  }
+
+  .placeholder-shell {
+    gap: 12px;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 0.82fr);
+  }
+
+  .placeholder-card {
+    padding: 14px;
+  }
+
+  .placeholder-header-row {
+    gap: 10px;
+  }
+
+  .device-grid {
+    grid-template-columns: minmax(180px, 0.85fr) minmax(0, 1.15fr);
+  }
+}
+
+@media (max-height: 780px) {
+  .placeholder-shell {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 0.78fr);
+  }
+
+  .device-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .device-status-chip,
+  .trend-badge {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .trend-chart-shell {
+    height: clamp(132px, 24vh, 220px);
+  }
+}
+
+@media (max-height: 700px) {
+  .placeholder-shell {
+    grid-template-rows: minmax(0, 1.05fr) minmax(0, 0.75fr);
+  }
+
+  .device-info-list {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .device-spotlight strong {
+    font-size: clamp(28px, 2.4vw, 42px);
+  }
+
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trend-chart-shell {
+    height: clamp(120px, 22vh, 180px);
+  }
+
+  .trend-footnote {
+    margin-top: 10px;
+  }
+}
+
 @media (max-width: 900px) {
 }
 
@@ -907,3 +1004,4 @@ ul {
     width: auto;
   }
 }
+
